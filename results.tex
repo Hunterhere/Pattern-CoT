@@ -1,0 +1,36 @@
+\begin{table}[h]
+  \caption{Overall accuracy (\%) and failure-to-extract rate (\% out of 1319 problems) on GSM8K for different models under various prompting strategies.}
+  \label{tab:gsm8k-results}
+  \centering
+  \resizebox{0.8\textwidth}{!}{%
+  \begin{tabular}{lcccccc}
+    \toprule
+    \multirow{2}{*}{\textbf{Model}} &
+    \multicolumn{2}{c}{\textbf{Zero-shot}} &
+    \multicolumn{2}{c}{\textbf{MCU-CoT}} &
+    \multicolumn{2}{c}{\textbf{Pattern CoT}} \\
+    \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} 
+    & Acc. & Fail (\%)
+    & Acc. & Fail (\%)
+    & Acc. & Fail (\%) \\
+    \midrule
+    Llama2 7B
+    & 21.83 & 2.12
+    & 41.24 & 0.99
+    & 26.46 & 1.82 \\
+    Llama2 13B
+    & 26.31 & 0.91
+    & 55.88 & 0.30
+    & 35.63 & 1.98 \\
+    Qwen2.5 3B
+    & 28.28 & 1.74
+    & 61.41 & 1.36
+    & 57.47 & 1.82 \\
+    Qwen2.5 7B
+    & 65.13 & 0.08
+    & 74.30 & 2.96
+    & 54.66 & 2.88 \\
+    \bottomrule
+  \end{tabular}
+  }
+\end{table}

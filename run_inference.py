@@ -1,5 +1,7 @@
 import argparse
-from collections import Counter
+import json
+import numpy as np
+from collections import Counter, defaultdict
 from utils import *
 
 def main():
@@ -7,113 +9,139 @@ def main():
     print('*****************************')
     print(args)
     print('*****************************')
-    
     fix_seed(args.random_seed)
-    
-    # Initialize decoder class (load model and tokenizer) ...
+
     decoder = Decoder(args.model_name, args.model_size, args.model_path)
-    
-    print("setup data loader ...")
     dataloader = setup_data_loader(args)
     print_now()
 
     if args.method == "few_shot":
         demo = create_demo_text(args, cot_flag=False)
-    elif args.method == "few_shot_cot" or args.method == "auto_cot" or args.method == "pattern_cot":
+    elif args.method in ["few_shot_cot", "auto_cot", "pattern_cot"]:
         demo = create_demo_text(args, cot_flag=True)
+    elif args.method == "mcu_cot":
+        demo = ""
     else:
-        pass
+        demo = ""
+
+    batch_size = 16
+    batch_prompts = []
+    batch_meta = []
 
     total = 0
     correct_total = 0
-    with open(args.output_dir, "a") as wp:
 
+    with open(args.output_dir, "a") as wp:
         for i, data in enumerate(dataloader):
             if i < args.resume_id - 1:
                 continue
-            output_line = {}
-            
-            print('*************************')
-            print("{}st data".format(i+1))
-                    
-            # Prepare question template ...
+
             x, y = data
             x = "Q: " + x[0] + "\n" + "A:"
-            #"Initial problem: " + x[0] + "\n" 
             y = y[0].strip()
-            
-            # print(x, y)
-            
-            output_line["question"] = x
-            output_line["gold_ans"] = y
 
             if args.method == "zero_shot":
-                x = x + " " + args.direct_answer_trigger_for_zeroshot
+                prompt = x + " " + args.direct_answer_trigger_for_zeroshot
             elif args.method == "zero_shot_cot":
-                x = x + " " + args.cot_trigger
-            elif args.method == "few_shot":
-                x = demo + x
-            elif args.method == "few_shot_cot":
-                x = demo + x
-            elif args.method == "auto_cot":
-                x = demo + x + " " + args.cot_trigger
-            elif args.method == "pattern_cot":
-                x = demo + x + " " + args.cot_trigger
+                prompt = x + " " + args.cot_trigger
+            elif args.method in ["few_shot", "few_shot_cot"]:
+                prompt = demo + x
+            elif args.method in ["auto_cot", "pattern_cot"]:
+                prompt = "Given Some Examlpes you can learn from and answer the following Question.\nExamples: \n####\n" + demo + "####\n Only Answer this Question, End with the answer number: \n" + x + " " + args.cot_trigger
+                
+            elif args.method == "mcu_cot":
+                with open(args.demo_path, encoding="utf-8") as f:
+                    demo_pool = json.load(f)["demo"]
+                same_ids = demo_pool[i]["same_ops_ids"]
+
+                #FIXME: 按字符串长度升序排序，优先选短的示例
+                candidate_demos = [demo_pool[_id] for _id in same_ids]
+                candidate_demos.sort(key=lambda ex: len(ex["question"] + " " + ex["rationale"]))
+                demo_ex = candidate_demos[:3]
+
+                demo_text = "".join(
+                    ex["question"] + " " + ex["rationale"] + ".\n\n"
+                    for ex in demo_ex
+                )
+                prompt = "Given Some Examlpes you can learn from and answer the following Question.\nExamples: \n####\n" + demo_text + "####\n Only Answer this Question, End with the answer number: \n" + x + " " + args.cot_trigger
             else:
                 raise ValueError("method is not properly defined ...")
 
-            preds = []
-            for _ in range(args.iterations):            
-                # Answer experiment by generating text ...
-                max_length = args.max_length_cot if "cot" in args.method else args.max_length_direct
-                z = decoder.decode(x, args.model_name, max_length)
+            max_length = args.max_length_cot if "cot" in args.method else args.max_length_direct
 
-                output_line["rationale"] = z
+            # 收集 batch
+            for _ in range(args.iterations):
+                batch_prompts.append(prompt)
+                batch_meta.append({
+                    "idx": i,
+                    "gold_ans": y,
+                    "question": x,
+                    "prompt": prompt,
+                    "max_length": max_length
+                })
 
-                # Answer extraction for zero-shot-cot ...
-                if args.method == "zero_shot_cot":
-                    z2 = x + z + " " + args.direct_answer_trigger_for_zeroshot_cot
-                    max_length = args.max_length_direct
-                    pred = decoder.decode(z2, args.model_name, max_length)
-                    print(z2 + pred)
-                else:
-                    pred = z
-                    print(x + pred)
+            if len(batch_prompts) >= batch_size:
+                process_batch(decoder, batch_prompts, batch_meta, wp, args, correct_total, total)
+                batch_prompts.clear()
+                batch_meta.clear()
 
-                # Clensing of predicted answer ...
-                pred = answer_cleansing(args, pred)
-                if pred:
-                    preds.append(pred)
-            
-            if not preds:
-                preds.append('')
-            pred = Counter(preds).most_common(1)[0][0] 
-            output_line["pred_ans"] = pred
-            output_line["wrap_que"] = x
-
-            output_json = json.dumps(output_line)
-            wp.write(output_json + '\n')
-
-            # Choose the most frequent answer from the list ...
-            print("pred : {}".format(pred))
-            print("GT : " + y)
-            print('*************************')
-            
-            # Checking answer ...
-            correct = (np.array([pred]) == np.array([y])).sum().item()
-            correct_total += correct
-            total += 1 #np.array([y]).size(0)
-            accuracy = (correct_total * 1.0 / total) * 100
-            print("accuracy : {}".format(accuracy))
-            
-            if (args.limit_dataset_size != 0) and ((i+1) >= args.limit_dataset_size):
+            if args.limit_dataset_size and (i + 1) >= args.limit_dataset_size:
                 break
-                #raise ValueError("Stop !!")
 
-    # Calculate accuracy ...
+        if batch_prompts:
+            correct_total, total = process_batch(decoder, batch_prompts, batch_meta, wp, args, correct_total, total)
+
     accuracy = (correct_total * 1.0 / total) * 100
-    print("accuracy : {}".format(accuracy))
-    
+    print("Final accuracy : {:.2f}%".format(accuracy))
+
+def process_batch(decoder, batch_prompts, batch_meta, wp, args, correct_total, total):
+    responses = decoder.decode(batch_prompts, args.model_name, batch_meta[0]["max_length"])
+    print("RAW RESPONSE: ", responses)
+
+    grouped = defaultdict(list)
+    for meta, resp in zip(batch_meta, responses):
+        idx = meta["idx"]
+        grouped[idx].append({
+            "resp": resp,
+            "gold": meta["gold_ans"],
+            "question": meta["question"],
+            "prompt": meta["prompt"]
+        })
+
+    for idx, items in grouped.items():
+        preds = []
+        rationales = []
+        for item in items:
+            resp = item["resp"]
+            if args.method == "zero_shot_cot":
+                z2 = item["prompt"] + resp + " " + args.direct_answer_trigger_for_zeroshot_cot
+                pred = decoder.decode([z2], args.model_name, args.max_length_direct)[0]
+            else:
+                pred = resp
+            cleaned = answer_cleansing(args, pred)
+            preds.append(cleaned)
+            rationales.append(resp)
+
+        final_pred = Counter(preds).most_common(1)[0][0]
+        gold = items[0]["gold"]
+
+        output_line = {
+            "question": items[0]["question"],
+            "gold_ans": gold,
+            "pred_ans": final_pred,
+            "rationale": "\n".join(rationales),
+            "wrap_que": items[0]["prompt"]
+        }
+
+        wp.write(json.dumps(output_line) + '\n')
+
+        correct = (np.array([final_pred]) == np.array([gold])).sum().item()
+        correct_total += correct
+        total += 1
+        print(f"[{total}] pred: {final_pred}, gold: {gold}, acc: {correct_total/total*100:.2f}%")
+
+    return correct_total, total
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Zero-shot-CoT")
 
@@ -132,7 +160,7 @@ def parse_arguments():
     parser.add_argument("--max_num_worker", type=int, default=0, help="maximum number of workers for dataloader")
     
     parser.add_argument(
-        "--method", type=str, default="zero_shot_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot", "pattern_cot"], help="method"
+        "--method", type=str, default="zero_shot_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot", "pattern_cot","mcu_cot"], help="method"
     )
     parser.add_argument(
         "--output_dir", type=str, default="experiment/addsub", help="output directory"
@@ -143,7 +171,7 @@ def parse_arguments():
     parser.add_argument(
         "--max_length_direct", type=int, default=256, help="maximum length of output tokens by model for answer extraction"
     )
-    parser.add_argument(
+    parser.add_argument( 
         "--limit_dataset_size", type=int, default=0, help="whether to limit test dataset size. if 0, the dataset size is unlimited and we use all the samples in the dataset for testing."
     )
     parser.add_argument(
@@ -159,7 +187,7 @@ def parse_arguments():
         "--model_size", type=str, default="7b", help="model size"
     )
     parser.add_argument(
-        "--model_path", type=str, default="", help="path to the model"
+        "--model_path", type=str, default="/root/autodl-tmp/Qwen2.5-7B-Instruct-1M", help="path to the model. Use Hugging Face ID for vLLM."
     )
     parser.add_argument(
         "--log_dir", type=str, default="./log/", help="log directory"
