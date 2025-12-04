@@ -98,27 +98,40 @@ export NCCL_CUMEM_ENABLE=0
 # 	--output_dir experiment/gsm8k_pattern_example.jsonl \
 # 	--max_length_cot 1024 2>&1 >log/GSM8K_pattern_example.log
 
+#----------------------------------------------------------------------------------
+
+
+# python run_inference_vllm.py \
+# 	--method zero_shot \
+# 	--dataset gsm8k \
+# 	--demo_path demos/gsm8k \
+# 	--model_name llama \
+# 	--model_size 7b \
+# 	--model_path /root/autodl-tmp/llama2_7b_hf \
+# 	--output_dir experiment/gsm8k_zero_shot_llama7b.jsonl \
+# 	--max_length_cot 512 2>&1 >log/GSM8K_zero_shot_llama7b.log
+
 
 # python run_inference_vllm.py \
 # 	--method pattern_cot \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
-# 	--model_name qwen \
+# 	--model_name llama \
 # 	--model_size 7b \
 # 	--model_path /root/autodl-tmp/llama2_7b_hf \
-# 	--output_dir experiment/gsm8k_pattern_example_llama.jsonl \
-# 	--max_length_cot 1024 2>&1 >log/GSM8K_pattern_example_llama.log
+# 	--output_dir experiment/gsm8k_pattern_example_llama7b.jsonl \
+# 	--max_length_cot 1024 2>&1 >log/GSM8K_pattern_example_llama7b.log
 
 
 # python run_inference_vllm.py \
 # 	--method mcu_cot \
 # 	--dataset gsm8k \
 # 	--demo_path gsm8k_llama7b_parsed.json \
-# 	--model_name qwen \
+# 	--model_name llama \
 # 	--model_size 7b \
 # 	--model_path /root/autodl-tmp/llama2_7b_hf \
-# 	--output_dir experiment/gsm8k_gold_example_llama.jsonl \
-# 	--max_length_cot 1024 2>&1 >log/GSM8K_gold_example_llama.log
+# 	--output_dir experiment/gsm8k_gold_example_llama7b.jsonl \
+# 	--max_length_cot 1024 2>&1 >log/GSM8K_gold_example_llama7b.log
 
 #----------------------------------------------------------------------------------
 
@@ -161,7 +174,7 @@ python run_inference_vllm.py \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
 # 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_size 3b \
 # 	--model_path /root/autodl-tmp/Qwen2.5-3B-Instruct \
 # 	--output_dir experiment/gsm8k_zero_shot_qwen3b.jsonl \
 # 	--max_length_cot 512 2>&1 >log/GSM8K_zero_shot_qwen3b.log
@@ -171,7 +184,7 @@ python run_inference_vllm.py \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
 # 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_size 3b \
 # 	--model_path /root/autodl-tmp/Qwen2.5-3B-Instruct \
 # 	--output_dir experiment/gsm8k_zero_shot_qwen3b.jsonl \
 # 	--max_length_cot 512 2>&1 >log/GSM8K_zero_shot_qwen3b.log
@@ -182,7 +195,7 @@ python run_inference_vllm.py \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
 # 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_size 3b \
 # 	--model_path /root/autodl-tmp/Qwen2.5-3B-Instruct \
 # 	--output_dir experiment/gsm8k_pattern_example_qwen3b.jsonl \
 # 	--max_length_cot 1024 2>&1 >log/GSM8K_pattern_example_qwen3b.log
@@ -193,7 +206,7 @@ python run_inference_vllm.py \
 # 	--dataset gsm8k \
 # 	--demo_path gsm8k_qwen3b_parsed.json \
 # 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_size 3b \
 # 	--model_path /root/autodl-tmp/Qwen2.5-3B-Instruct \
 # 	--output_dir gsm8k_gold_example_qwen3b.jsonl \
 # 	--max_length_cot 1024 2>&1 >log/GSM8K_gold_example_qwen3b.log
@@ -204,8 +217,8 @@ python run_inference_vllm.py \
 # 	--method zero_shot_cot \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
-# 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_name llama \
+# 	--model_size 13b \
 # 	--model_path /root/autodl-tmp/llama2_13b_hf \
 # 	--output_dir experiment/gsm8k_zero_shot_llama13b.jsonl \
 # 	--max_length_cot 512 2>&1 >log/GSM8K_zero_shot_llama13b.log
@@ -215,8 +228,8 @@ python run_inference_vllm.py \
 # 	--method pattern_cot \
 # 	--dataset gsm8k \
 # 	--demo_path demos/gsm8k \
-# 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_name llama \
+# 	--model_size 13b \
 # 	--model_path /root/autodl-tmp/llama2_13b_hf \
 # 	--output_dir experiment/gsm8k_pattern_example_llama13b.jsonl \
 # 	--max_length_cot 1024 2>&1 >log/GSM8K_pattern_example_llama13b.log
@@ -225,8 +238,8 @@ python run_inference_vllm.py \
 # 	--method mcu_cot \
 # 	--dataset gsm8k \
 # 	--demo_path gsm8k_llama13b_parsed.json \
-# 	--model_name qwen \
-# 	--model_size 7b \
+# 	--model_name llama \
+# 	--model_size 13b \
 # 	--model_path /root/autodl-tmp/llama2_13b_hf \
 # 	--output_dir experiment/gsm8k_gold_example_llama13b.jsonl \
 # 	--max_length_cot 1024 2>&1 >log/GSM8K_gold_example_llama13b.log

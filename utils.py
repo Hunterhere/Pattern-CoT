@@ -10,6 +10,10 @@ import random
 import time
 import datetime
 from transformers import AutoTokenizer, AutoModel, AutoModelForCausalLM, BitsAndBytesConfig
+from vllm import LLM, SamplingParams
+from vllm.sampling_params import SamplingParams, GuidedDecodingParams
+from typing import List
+from pathlib import Path
 
 def shuffleDict(d):
     keys = list(d.keys())
@@ -45,59 +49,38 @@ def print_now(return_flag=0):
     else:
         pass
 
-class Decoder():
+
+class Decoder: # Batch version
     def __init__(self, model_name, size, path):
-        # print_now()
-        device_count = torch.cuda.device_count()
-        max_memory = {}
-        for i in range(device_count):
-            max_memory[i] = torch.cuda.mem_get_info(i)[0]
+        self.sampling_params = SamplingParams(temperature=0.8, top_p=0.9, max_tokens=1024, repetition_penalty=1.2)
+        self.model = LLM(
+            model=path,
+            trust_remote_code=True,
+            tensor_parallel_size=torch.cuda.device_count(),
+            dtype="bfloat16",
+            gpu_memory_utilization=0.95,
+            max_num_seqs=128,
+            # max_model_len=8192
+        )
 
-        if model_name == 'llama':
-            bnb_config = BitsAndBytesConfig(
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=False
-            )
-            self.tokenizer = AutoTokenizer.from_pretrained(f"{path}/llama2-{size}-chat-hf", trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(f"{path}/llama2-{size}-chat-hf", trust_remote_code=True, max_memory=max_memory, device_map="auto", low_cpu_mem_usage=True, torch_dtype=torch.float16)
-            self.model.eval()
-
-        elif model_name == 'qwen':
-            self.tokenizer = AutoTokenizer.from_pretrained(f"{path}/qwen-{size}-chat", trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(f"{path}/qwen-{size}-chat", trust_remote_code=True, device_map="auto", max_memory=max_memory)
-            self.model.eval()
-        elif model_name == 'gpt-3.5':
-            from openai import OpenAI
-            self.client = OpenAI(
-                api_key = "API_KEY",
-                base_url = "URL",
-            )
-
- 
-    def decode(self, prompt, model_name, max_length=256):
-        if model_name == 'qwen':
-            response, header = self.model.chat(self.tokenizer, prompt, history=[], max_new_tokens=max_length)
-        elif model_name == 'llama':
-            input_ids = self.tokenizer(prompt, return_tensors="pt",add_special_tokens=False).input_ids.to('cuda')
-            generate_input = {
-                "input_ids":input_ids,
-                "max_new_tokens":max_length,
-                "temperature": 0.1,
-                "repetition_penalty":1.18,
-                "top_p": 0.95,
-                #"do_sample":True,
-                #"top_k":40,
-            }
-            generate_ids = self.model.generate(**generate_input)
-            generate_ids = [item[len(input_ids[0]):-1] for item in generate_ids]
-            response = self.tokenizer.batch_decode(generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-        elif model_name == 'gpt-3.5':
-            messages = [{'role':'user', 'content':prompt}]
-            completion = self.client.chat.completions.create(model="gpt-3.5-turbo", messages=messages)
-            response = completion.choices[0].message.content
+    def decode(self, prompts, model_name, max_length=2048):
+        self.sampling_params.max_tokens = max_length
+        outputs = self.model.generate(prompts, self.sampling_params, use_tqdm=False)
+        return [out.outputs[0].text for out in outputs]
+    
+    def decode_structured(self,
+                          prompts: List[str],
+                          max_length: int,
+                          schema: type) -> List[str]:
         
-        return response
+        guided = GuidedDecodingParams(json=schema.model_json_schema())
+        sp = SamplingParams(
+            max_tokens=max_length,
+            temperature=0.0,
+            guided_decoding=guided
+        )
+        outs = self.llm.generate(prompts, sp)
+        return [o.outputs[0].text for o in outs]
 
 def data_reader(args):
 
@@ -275,64 +258,73 @@ def setup_data_loader(args):
 
     return dataloader
 
-# ver 0.2
 def answer_cleansing(args, pred, must_choice=False):
+    if not hasattr(answer_cleansing, 'fail_count'):
+        answer_cleansing.fail_count = 0
 
+    original_pred = pred
     print("pred_before : " + pred)
-    
-    if args.method in ("few_shot", "few_shot_cot", "auto_cot", "pattern_cot"):
-        preds = pred.split(args.direct_answer_trigger_for_fewshot)
-        answer_flag = True if len(preds) > 1 else False 
-        pred = preds[-1]
+
+    triggers = [
+        args.direct_answer_trigger_for_fewshot.lower(),  # “the answer is”
+        "result is",
+        "final answer is"
+    ]
+    answer_flag = False
+    pred_lower = pred.lower()
+    for t in triggers:
+        if t in pred_lower:
+            pred = pred[pred_lower.rfind(t) + len(t):]
+            answer_flag = True
+            break
 
     if args.dataset in ("aqua", "commonsensqa"):
         pred = re.findall(r'A|B|C|D|E', pred)
     elif args.dataset == "bigbench_date":
         pred = re.findall(r'A|B|C|D|E|F', pred)
-    elif args.dataset in ("object_tracking"):
+    elif args.dataset in ("object_tracking",):
         pred = re.findall(r'A|B|C', pred)
     elif args.dataset in ("gsm8k", "addsub", "multiarith", "svamp", "singleeq"):
         if must_choice:
             pred = re.findall(r'A|B|C|D', pred)
         else:
-            pred = pred.replace(",", "")
-            pred = [s for s in re.findall(r'-?\d+\.?\d*', pred)]
+            if not answer_flag:
+                sentences = re.split(r'[.!?]', pred)
+                last_two = ' '.join(sentences[-2:]) if len(sentences) >= 2 else pred
+                pred = re.findall(r'-?\d+(?:\.\d+)?', last_two.replace(',', ''))
+            else:
+                pred = re.findall(r'-?\d+(?:\.\d+)?', pred.replace(',', ''))
     elif args.dataset in ("strategyqa", "coin_flip"):
         pred = pred.lower()
-        pred = re.sub("\"|\'|\n|\.|\s|\:|\,|\!"," ", pred)
-        pred = pred.split(" ")
-        pred = [i for i in pred if i in ("yes", "no")]
-    elif args.dataset in ("last_letters"):
-        pred = re.sub("\"|\'|\n|\.|\s","", pred)
+        pred = re.sub(r'["\'\n.\s:!,]', ' ', pred)
+        pred = [tok for tok in pred.split() if tok in ("yes", "no")]
+    elif args.dataset in ("last_letters",):
+        pred = re.sub(r'["\'\n.\s]', '', pred)
         pred = [pred]
     else:
         raise ValueError("dataset is not properly defined ...")
 
-    # If there is no candidate in list, null is set.
     if len(pred) == 0:
+        answer_cleansing.fail_count += 1
         pred = ""
     else:
-        if args.method in ("few_shot", "few_shot_cot", "auto_cot", "pattern_cot"):
-            if answer_flag:
-                # choose the first element in list ...
-                pred = pred[0]
-            else:
-                # choose the last element in list ...
-                pred = pred[-1]
-        elif args.method in ("zero_shot", "zero_shot_cot"):
-            # choose the first element in list ...
+        if args.method in ("few_shot", "few_shot_cot", "auto_cot", "pattern_cot", "test_cot"):
+            pred = pred[0] if answer_flag else pred[-1]
+        else:                   # zero-shot 类
             pred = pred[0]
-        else:
-            raise ValueError("method is not properly defined ...")
-    
-    # (For arithmetic tasks) if a word ends with period, it will be omitted ...
-    if pred != "":
-        if pred[-1] == ".":
-            pred = pred[:-1]
-    
-    print("pred_after : " + pred)
-    
+
+    if pred and pred[-1] == '.':
+        pred = pred[:-1]
+
+    print("pred_after  : " + pred)
+    if pred == "":
+        print("[AnswerCleansing] failed to extract any valid answer.")
     return pred
+
+
+def get_answer_cleansing_fail_count():
+    return getattr(answer_cleansing, 'fail_count', 0)
+
 
 def create_demo_text(args, cot_flag):
     x, z, y = [], [], []
@@ -394,3 +386,32 @@ def answer_cleansing_zero_shot(args, pred, must_choice=False):
             pred = pred[:-1]
 
     return pred
+
+
+def convert_gsm8k_jsonl_to_json(input_file: str, output_file: str):
+    # INPUT_FILE  = Path('experiment/gsm8k_zero_shot_llama13b.jsonl')
+    # OUTPUT_FILE = Path('gsm8k_llama13b.json')
+
+    INPUT_FILE = Path(input_file)
+    OUTPUT_FILE = Path(output_file)
+
+    demo = []
+    with INPUT_FILE.open(encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            obj = json.loads(line)
+            demo.append(
+                {
+                    "question":  obj.get("question", ""),
+                    "rationale": obj.get("rationale", ""),
+                    "pred_ans":  obj.get("pred_ans", ""),
+                    "gold_ans":  obj.get("gold_ans", ""),
+                    "wrap_que":  obj.get("wrap_que", "")
+                }
+            )
+
+    with OUTPUT_FILE.open('w', encoding='utf-8') as f_out:
+        json.dump({"demo": demo}, f_out, ensure_ascii=False, indent=2)
+    return len(demo)
