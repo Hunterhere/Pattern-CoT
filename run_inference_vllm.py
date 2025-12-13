@@ -19,7 +19,7 @@ def main():
         demo = create_demo_text(args, cot_flag=False)
     elif args.method in ["few_shot_cot", "auto_cot", "pattern_cot"]:
         demo = create_demo_text(args, cot_flag=True)
-    elif args.method == "test_cot":
+    elif args.method == "mcu_cot":
         demo = ""
     else:
         demo = ""
@@ -49,7 +49,7 @@ def main():
             elif args.method in ["auto_cot", "pattern_cot"]:
                 prompt = "Given Some Examlpes you can learn from and answer the following Question.\nExamples: \n####\n" + demo + "####\n Only Answer this Question, End with the answer number: \n" + x + " " + args.cot_trigger
                 # print(prompt)
-            elif args.method == "test_cot":
+            elif args.method == "mcu_cot":
                 with open(args.demo_path, encoding="utf-8") as f:
                     demo_pool = json.load(f)["demo"]
                 same_ids = demo_pool[i]["same_ops_ids"]
@@ -161,7 +161,7 @@ def parse_arguments():
     parser.add_argument("--max_num_worker", type=int, default=0, help="maximum number of workers for dataloader")
     
     parser.add_argument(
-        "--method", type=str, default="zero_shot_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot", "pattern_cot","test_cot"], help="method"
+        "--method", type=str, default="zero_shot_cot", choices=["zero_shot", "zero_shot_cot", "few_shot", "few_shot_cot", "auto_cot", "pattern_cot","mcu_cot"], help="method"
     )
     parser.add_argument(
         "--output_dir", type=str, default="experiment/addsub", help="output directory"
